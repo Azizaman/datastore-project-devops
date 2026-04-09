@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+
+    # ── INPUT: Read container logs from node filesystem ──────────
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path /var/log/containers/*_backend_*.log
+        # 🔥 VERY IMPORTANT FIXES
+        Exclude_Path /var/log/containers/*kube-system*.log,/var/log/containers/*logging*.log 
+        Parser            cri
+        DB                /var/log/flb_kube.db
+
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+
+        Refresh_Interval  30
+        Rotate_Wait       30
+
+        Ignore_Older      5m
+        # ── FILTER: Enrich logs with Kubernetes metadata ─────────────
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+
+    # ── OUTPUT: Send logs to Elasticsearch ───────────────────────
+    [OUTPUT]
+        Name            es
+        Match           *
+        Host            elasticsearch
+        Port            9200
+        Logstash_Format On
+        Logstash_Prefix k8s-logs
+        Replace_Dots    On
+        Retry_Limit     False
+        Time_Key        @timestamp
+        tls             Off
+        tls.verify      Off
+
+  parsers.conf: |
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<log>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name        json
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%fZ

@@ -1,25 +1,30 @@
-pipeline{
+pipeline {
     agent any
-    stages{
-        stage('checkout code'){
-            steps{
-                sh '''
-                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/Azizaman/datastore-project-devops.git']])
-                '''
+
+    environment {
+        App_Version = "v1.0.${BUILD_NUMBER}"
+    }
+
+    stages {
+
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Azizaman/datastore-project-devops.git'
             }
         }
-        stage('maven build'){
-            steps{
+
+        stage('Maven Build') {
+            steps {
                 sh '''
                 echo "-------- Building Application --------"
                 mvn clean package
-                echo "------- Application Built Successfully --------"
-               
+                echo "-------- Build Completed --------"
                 '''
             }
         }
-        stage('maven test'){
-            steps{
+
+        stage('Maven Test') {
+            steps {
                 sh '''
                 echo "-------- Running Tests --------"
                 mvn test
@@ -27,73 +32,90 @@ pipeline{
                 '''
             }
         }
-        stage('artifact store'){
-            steps{
+
+        stage('Upload Artifact to S3') {
+            steps {
                 sh '''
-                echo "-------- Storing Artifacts --------"
-                aws s3 cp ./target/*.jar s3://datastore-artefact-store-apps-jenkins/
-                echo "-------- Artifacts Stored Successfully --------"
+                echo "-------- Uploading Artifact to S3 --------"
+                aws s3 cp target/*.jar s3://datastore-artefact-store-apps-jenkins/
+                echo "-------- Upload Successful --------"
                 '''
             }
         }
-        stage("docker image build") {
-            steps {
-            sh """
-            echo "-------- Building Docker Image --------"
-            docker build -t datastore:"${App_Version}" .
-            echo "-------- Image Successfully Built --------"
-            """
-      }
-    }
-        stage("docker image scan") {
-            steps {
-            sh """
-            echo "-------- Scanning Docker Image --------"
-            trivy image datastore:"${App_Version}"
-            echo "-------- Scanning Docker Image Complete --------"
-            """
-      }
-    }
-        stage("docker image tag") {
-            steps{
-            sh """
-            echo "-------- Tagging Docker Image --------"
-            docker tag datastore:"${App_Version}" 8072388539/datastore:"${App_Version}"
-            echo "-------- Tagging Docker Image Completed."
-        """
-      }
-    }
-        stage("loggingin & pushing docker image") {
-            steps {
-            sh """
-            echo "-------- Logging To DockerHub --------"
-            docker login -u $DOCKERHUB_CREDENTIALS_USR --password $DOCKERHUB_CREDENTIALS_PSW
-            echo "-------- DockerHub Login Successful --------"
 
-            echo "-------- Pushing Docker Image To DockerHub --------"
-            docker push 8072388539/datastore:"${App_Version}"
-            echo "-------- Docker Image Pushed Successfully --------"
-        """
-      }
-    }
-        stage("cleanup") {
+        stage('Build Docker Image') {
             steps {
-            sh """
-            echo "-------- Cleaning Up Jenkins Machine --------"
-            docker image prune -a -f
-            echo "-------- Clean Up Successful --------"
-        """
-      }
-    }
-        stage("deployment acceptance") {
+                sh '''
+                echo "-------- Building Docker Image --------"
+                docker build -t datastore:${App_Version} .
+                echo "-------- Docker Image Built --------"
+                '''
+            }
+        }
+
+        stage('Scan Docker Image') {
             steps {
-            input 'Trigger Down Stream Job'
-      }
-    }
-        stage("triggering deployment job") {
+                sh '''
+                echo "-------- Scanning Image --------"
+                trivy image datastore:${App_Version}
+                echo "-------- Scan Completed --------"
+                '''
+            }
+        }
+
+        stage('Tag Docker Image') {
             steps {
-            build job: "KubernetesDeployment", parameters: [string(name: "App_Name", value: "datastore-deploy"), string(name: "App_Version", value: "${params.App_Version}")]
-      }
-    }
+                sh '''
+                echo "-------- Tagging Image --------"
+                docker tag datastore:${App_Version} 8072388539/datastore:${App_Version}
+                echo "-------- Tagging Done --------"
+                '''
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+
+                    sh '''
+                    echo "-------- Docker Login --------"
+                    docker login -u $DOCKER_USER -p $DOCKER_PASS
+
+                    echo "-------- Pushing Image --------"
+                    docker push 8072388539/datastore:${App_Version}
+                    echo "-------- Push Completed --------"
+                    '''
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''
+                echo "-------- Cleaning Docker --------"
+                docker image prune -a -f
+                '''
+            }
+        }
+
+        stage('Deployment Approval') {
+            steps {
+                input message: "Do you want to deploy?"
+            }
+        }
+
+        stage('Trigger Deployment Job') {
+            steps {
+                build job: "KubernetesDeployment",
+                parameters: [
+                    string(name: "App_Name", value: "datastore-deploy"),
+                    string(name: "App_Version", value: "${App_Version}")
+                ]
+            }
+        }
     }
 }

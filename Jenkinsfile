@@ -21,18 +21,18 @@ pipeline{
         stage('maven test'){
             steps{
                 sh '''
-                ehco '''-------- Running Tests --------'''
+                echo "-------- Running Tests --------"
                 mvn test
-                echo '''-------- Tests Completed --------'''
+                echo "-------- Tests Completed --------"
                 '''
             }
         }
         stage('artifact store'){
             steps{
                 sh '''
-                echo '''-------- Storing Artifacts --------'''
+                echo "-------- Storing Artifacts --------"
                 aws s3 cp ./target/*.jar s3://datastore-artefact-store-apps-jenkins/
-                echo '''-------- Artifacts Stored Successfully --------'''
+                echo "-------- Artifacts Stored Successfully --------"
                 '''
             }
         }
